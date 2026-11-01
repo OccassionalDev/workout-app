@@ -5,12 +5,13 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const enc = encodeURIComponent, dec = decodeURIComponent;
 
-const DEFAULTS = () => ({ templates: [], workouts: [], measurements: [], active: null, settings: { unit: 'kg', rest: 90 } });
+const DEFAULTS = () => ({ exercises: [], templates: [], workouts: [], measurements: [], active: null, settings: { unit: 'kg', rest: 90 } });
 let S = (() => { try { return Object.assign(DEFAULTS(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { return DEFAULTS(); } })();
 const save = () => localStorage.setItem(KEY, JSON.stringify(S));
 
 const BASE_EXERCISES = ['Bench Press (Barbell)','Incline Bench Press (Barbell)','Bench Press (Dumbbell)','Incline Bench Press (Dumbbell)','Chest Fly (Dumbbell)','Push Up','Overhead Press (Barbell)','Overhead Press (Dumbbell)','Lateral Raise (Dumbbell)','Triceps Pushdown (Cable)','Skullcrusher (Barbell)','Dip','Deadlift (Barbell)','Romanian Deadlift (Barbell)','Bent Over Row (Barbell)','Seated Row (Cable)','Lat Pulldown (Cable)','Pull Up','Chin Up','Face Pull (Cable)','Bicep Curl (Dumbbell)','Hammer Curl (Dumbbell)','Bicep Curl (Barbell)','Squat (Barbell)','Front Squat (Barbell)','Leg Press','Leg Extension (Machine)','Leg Curl (Machine)','Lunge (Dumbbell)','Bulgarian Split Squat','Hip Thrust (Barbell)','Calf Raise (Machine)','Plank','Crunch','Hanging Leg Raise','Cable Crossover'];
-const allExercises = () => [...new Set([...BASE_EXERCISES, ...S.workouts.flatMap(w => w.exercises.map(e => e.name)), ...S.templates.flatMap(t => t.exercises.map(e => e.name))])].sort();
+const MUSCLES = ['Chest','Back','Shoulders','Biceps','Triceps','Legs','Glutes','Core','Cardio','Other'];
+const allExercises = () => [...new Set([...BASE_EXERCISES, ...S.exercises.map(e => e.name), ...S.workouts.flatMap(w => w.exercises.map(e => e.name)), ...S.templates.flatMap(t => t.exercises.map(e => e.name))])].sort();
 
 const unit = () => S.settings.unit;
 const num = v => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
@@ -163,7 +164,7 @@ function viewWorkout() {
 window.cycleType = (ei, si) => { const s = S.active.exercises[ei].sets[si]; s.type = s.type === 'W' ? 'N' : 'W'; save(); render(); };
 window.setVal = (ei, si, k, v) => { S.active.exercises[ei].sets[si][k] = num(v); save(); };
 window.addSet = ei => { const e = S.active.exercises[ei], l = e.sets[e.sets.length - 1]; e.sets.push({ type: 'N', w: l?.w || 0, r: 0, done: false }); save(); render(); };
-window.addExercise = () => { const n = $('#addex').value.trim(); if (!n) return; S.active.exercises.push({ name: n, note: '', sets: [{ type: 'N', w: lastSets(n)[0]?.w || 0, r: 0, done: false }] }); save(); render(); };
+window.addExercise = () => { const n = $('#addex').value.trim(); if (!n) return; if (!allExercises().includes(n)) S.exercises.push({ id: uid(), name: n, muscle: 'Other' }); S.active.exercises.push({ name: n, note: '', sets: [{ type: 'N', w: lastSets(n)[0]?.w || 0, r: 0, done: false }] }); save(); render(); };
 window.toggleSet = (ei, si) => {
   const s = S.active.exercises[ei].sets[si];
   if (!s.done && !s.r) { const p = lastSets(S.active.exercises[ei].name)[si]; s.r = p?.r || 0; }
@@ -205,7 +206,7 @@ function viewExercises() {
   if (route.name) {
     const name = dec(route.name), h = exerciseHistory(name), r = records(name);
     const val = { e1rm: x => Math.max(...x.sets.map(s => e1rm(s.w, s.r))), weight: x => Math.max(...x.sets.map(s => s.w)), volume: x => x.sets.reduce((a, s) => a + s.w * s.r, 0), reps: x => Math.max(...x.sets.map(s => s.r)) }[metric];
-    return `<button class="link" onclick="go('exercises')">← All exercises</button><h2 style="margin:8px 0">${esc(name)}</h2>
+    return `<button class="link" onclick="go('exercises')">← All exercises</button><h2 style="margin:8px 0">${esc(name)}</h2>${S.exercises.some(e => e.name === name) ? `<div class="row"><button class="link" onclick="go('exercises',{sub:'new',edit:'${name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'})">Edit</button><button class="link" style="color:var(--danger)" onclick="deleteExercise(decodeURIComponent('${enc(name)}'))">Delete</button></div>` : ''}
       <div class="card"><div class="stat"><div><span class="muted">Heaviest</span><b>${fmt(r.maxW)} ${unit()}</b></div><div><span class="muted">Est. 1RM</span><b>${fmt(r.best1)} ${unit()}</b></div>
       <div><span class="muted">Best set</span><b>${fmt(r.bestSet)}</b></div><div><span class="muted">Best session vol.</span><b>${fmt(r.bestSession)}</b></div></div></div>
       <div class="card"><select onchange="metric=this.value;render()">${[['e1rm','Estimated 1RM'],['weight','Heaviest weight'],['volume','Session volume'],['reps','Max reps']].map(([k, l]) => `<option value="${k}" ${metric === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -213,12 +214,28 @@ function viewExercises() {
       <h2 style="margin:8px 0">History</h2>` +
       (h.slice().reverse().map(x => `<div class="card"><b>${dt(x.date)}</b>${x.note ? `<div class="muted">${esc(x.note)}</div>` : ''}<br>${x.sets.map(s => `${fmt(s.w)} ${unit()} × ${s.r}${s.w === r.maxW ? ' <span class="pr">PR</span>' : ''}`).join('<br>')}</div>`).join('') || '<p class="muted">No history yet.</p>');
   }
-  const names = [...new Set(S.workouts.flatMap(w => w.exercises.map(e => e.name)))].sort();
-  return `<input id="exq" placeholder="Search" oninput="filterEx(this.value)" style="margin-bottom:10px"><div id="exl">${exList(names, '')}</div>`;
+  if (route.sub === 'new') return `<button class="link" onclick="go('exercises')">← Back</button><div class="card"><h2>${route.edit ? 'Edit' : 'New'} exercise</h2>
+    <input id="xn" placeholder="Exercise name" value="${esc(route.edit || '')}" style="margin:8px 0">
+    <select id="xm">${MUSCLES.map(m => `<option ${S.exercises.find(e => e.name === route.edit)?.muscle === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
+    <div class="row" style="margin-top:10px"><button class="btn ok grow" onclick="saveExercise()">Save</button><button class="btn sec" onclick="go('exercises')">Cancel</button></div></div>`;
+  return `<div class="row" style="margin-bottom:10px"><input id="exq" placeholder="Search" oninput="filterEx(this.value)"><button class="btn" onclick="go('exercises',{sub:'new'})">+ New</button></div><div id="exl">${exList('')}</div>`;
 }
-const exList = (names, q) => names.filter(n => n.toLowerCase().includes(q.toLowerCase())).map(n => { const r = records(n);
-  return `<div class="card row" onclick="go('exercises',{name:'${enc(n)}'})"><div class="grow"><b>${esc(n)}</b><div class="muted">${r.sessions} sessions</div></div><div class="muted">${fmt(r.maxW)} ${unit()}</div></div>`; }).join('') || '<p class="muted">Complete a workout to see exercises here.</p>';
-window.filterEx = q => { $('#exl').innerHTML = exList([...new Set(S.workouts.flatMap(w => w.exercises.map(e => e.name)))].sort(), q); };
+const exList = q => allExercises().filter(n => n.toLowerCase().includes(q.toLowerCase())).map(n => { const r = records(n), c = S.exercises.find(e => e.name === n);
+  return `<div class="card row" onclick="go('exercises',{name:'${enc(n)}'})"><div class="grow"><b>${esc(n)}</b><div class="muted">${c ? esc(c.muscle) + ' · custom · ' : ''}${r.sessions} sessions</div></div><div class="muted">${r.maxW ? fmt(r.maxW) + ' ' + unit() : ''}</div></div>`; }).join('') || '<p class="muted">No exercises found.</p>';
+window.filterEx = q => { $('#exl').innerHTML = exList(q); };
+window.saveExercise = () => {
+  const n = $('#xn').value.trim(); if (!n) return alert('Enter a name.');
+  const old = route.edit, dup = allExercises().some(x => x.toLowerCase() === n.toLowerCase() && x !== old);
+  if (dup) return alert('That exercise already exists.');
+  if (old) { const c = S.exercises.find(e => e.name === old); c.name = n; c.muscle = $('#xm').value; renameEverywhere(old, n); }
+  else S.exercises.push({ id: uid(), name: n, muscle: $('#xm').value });
+  save(); go('exercises');
+};
+function renameEverywhere(a, b) {
+  const fix = e => { if (e.name === a) e.name = b; };
+  S.workouts.forEach(w => w.exercises.forEach(fix)); S.templates.forEach(t => t.exercises.forEach(fix)); S.active?.exercises.forEach(fix);
+}
+window.deleteExercise = name => { if (confirm('Delete this custom exercise? Past history is kept.')) { S.exercises = S.exercises.filter(e => e.name !== name); save(); go('exercises'); } };
 
 /* ---------- history ---------- */
 function viewHistory() {
